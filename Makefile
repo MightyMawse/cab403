@@ -3,10 +3,10 @@ CFLAGS = -Wall -Wextra -g
 
 all: call con
 
-call: call.o shared.o
+call: call.o tcp.o shared.o
 	$(CC) $^ -o $@
 
-con: controller.o shared.o
+con: controller.o tcp.o shared.o
 	$(CC) $^ -o $@
 
 %.o: %.c

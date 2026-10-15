@@ -3,21 +3,58 @@
 #include <netinet/in.h>
 #include <stdlib.h>
 #include <string.h>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <pthread.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include "shared.h"
+#include "tcp.h"
 
 #define SA struct sockaddr
+int sockfd; 
+int connfd;
 
-#define AVAILABLE 0x01
-#define UNAVAILABLE 0x02
+#define STR_ACCEPTED "ACCEPTED" 
+#define STR_UNAVAILABLE "UNAVAILABLE"
 
 void tcp_server_listen( int connfd );
+int tcp_server_init();
+int shm_init();
 
 int main()
-{
-    int sockfd, connfd, len;
+{   
+    if(tcp_server_init()){
+        tcp_server_listen(connfd);
+    }
+
+    // After chatting close the socket
+    close(sockfd);
+}
+
+int shm_init(){
+    // creator (process A)
+    int fd = shm_open("/my_shm", O_CREAT | O_RDWR, 0666);
+    ftruncate(fd, sizeof(car_shared_mem));
+    car_shared_mem *shm = mmap(NULL, sizeof(car_shared_mem), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+
+    // init the mutex/cond as process-shared (creator only, once)
+    pthread_mutexattr_t ma;
+    pthread_mutexattr_init(&ma);
+    pthread_mutexattr_setpshared(&ma, PTHREAD_PROCESS_SHARED);
+    pthread_mutex_init(&shm->mutex, &ma);
+
+    pthread_condattr_t ca;
+    pthread_condattr_init(&ca);
+    pthread_condattr_setpshared(&ca, PTHREAD_PROCESS_SHARED);
+    pthread_cond_init(&shm->cond, &ca);
+}
+
+int tcp_server_init(){
+    int len;
     struct sockaddr_in servaddr, cli;
 
     // socket create and verification
@@ -35,6 +72,8 @@ int main()
     servaddr.sin_family = AF_INET;
     servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
     servaddr.sin_port = htons(PORT);
+
+    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, 1, 1);
 
     // Binding newly created socket to given IP and verification
     if ((bind(sockfd, (SA *)&servaddr, sizeof(servaddr))) != 0)
@@ -65,57 +104,38 @@ int main()
     else
         printf("server accept the client...\n");
 
-    // Function for chatting between client and server
-
-    tcp_server_listen(connfd);
-
-    // After chatting close the socket
-    close(sockfd);
+    return 1;
 }
 
 void tcp_server_listen( int connfd )
 {
     uint8_t msg_buf[MAX_TCP_LENGTH];
-    uint8_t* pbuf;
+    uint8_t* pbuf = msg_buf;
 
-    // read the message from client and copy it in buffer
     read(connfd, msg_buf, sizeof(msg_buf));
 
-    uint16_t net_msg_len;
-    uint16_t msg_len;
-
-    pbuf = msg_buf;
-
-    memcpy(&net_msg_len, pbuf, 2);
-    pbuf += 2;
-    msg_len = ntohs(net_msg_len);
+    uint16_t msg_len = tcp_get_header_length(pbuf);
 
     if (msg_len > 0)
     {
         // Get cmd number
-        uint8_t cmd;
-        memcpy(&cmd, pbuf, 1);
-        pbuf++;
+        uint8_t cmd = tcp_get_cmd(pbuf);
 
         switch (cmd)
         {
         case TCP_CMD_CALL:
-            tcp_call_t *call = tcp_deserialise_call(pbuf);
+            tcp_call_t call;
 
-            /* Test Deserialiser */
-            printf("TCP_CMD_CALL\n");
-            printf("%d\n", call->command);
-            printf("%d\n", call->nmlen);
-            printf("%s\n", call->nm);
-            printf("%d\n", call->fl);
-            printf("%d\n", call->ud);
+            tcp_deserialise_call(pbuf, &call);
 
             /* TODO */
 
             bzero(msg_buf, MAX_TCP_LENGTH);
 
             tcp_string_t string;
-            string.str = "RESPONSE STRING";
+            string.str = STR_ACCEPTED;
+            string.strlen = strlen(string.str);
+            string.command = TCP_CMD_STRING;
 
             tcp_serialise_string(msg_buf, &string);
             write(connfd, msg_buf, sizeof(msg_buf));

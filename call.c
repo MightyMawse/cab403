@@ -5,9 +5,12 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include "shared.h"
+#include "tcp.h"
 
 #define AVAILABLE 0x01
 #define UNAVAILABLE 0x02
+
+void tcp_call();
 
 char *car_name;
 uint8_t floor;
@@ -68,6 +71,12 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
+    printf("Car %c is arriving.", car_name);
+
+    tcp_call();
+}
+
+void tcp_call(){
     uint8_t msg_buf[MAX_TCP_LENGTH];
     tcp_call_t call;
 
@@ -91,14 +100,8 @@ int main(int argc, char *argv[])
         printf("Unable to connect to elevator system.");
     }
     else{
-        uint16_t net_msg_len;
-        uint16_t msg_len;
-
-        memcpy(&net_msg_len, resp_buf, 2);
-        msg_len = ntohs(net_msg_len);
-
-        for(int i = 0; i < msg_len; i++){
-            printf("%c", resp_buf[i]);
-        }
+        tcp_string_t str_buf;
+        tcp_deserialise_string(&resp_buf, &str_buf);
+        printf(str_buf.str); // ACCEPTED / UNAVAILABLE
     }
 }
